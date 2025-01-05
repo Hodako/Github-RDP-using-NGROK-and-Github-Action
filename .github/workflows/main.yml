@@ -11,41 +11,41 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v3
 
-    - name: Install Remote Desktop Services
+    - name: Configure Remote Desktop
       run: |
-        Install-WindowsFeature RSAT-Remote-Server-AdminTools
-        Import-Module ServerManager
-        Add-WindowsFeature Remote-Desktop-Services -IncludeManagementTools
-
-    - name: Start RDP Service
-      run: |
-        Start-Service TermService
+        Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0
+        Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
+        Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 1
 
     - name: Download and Install Ngrok
       run: |
-        # Download Ngrok
         Invoke-WebRequest -Uri "https://bin.equinox.io/c/4VmDzA7iaHb/ngrok-stable-windows-amd64.zip" -OutFile ngrok.zip
         Expand-Archive -Path ngrok.zip -DestinationPath .
 
-    - name: Authenticate Ngrok
+    - name: Configure Ngrok
+      env:
+        NGROK_AUTH_TOKEN: ${{ secrets.NGROK_AUTH_TOKEN }}
       run: |
-        .\ngrok authtoken 2rC7iawEEfzRpSiL0KAaBWTNBB7_7NzNYTKce8RFTuQ3y6jfR
+        .\ngrok authtoken $env:NGROK_AUTH_TOKEN
 
     - name: Start Ngrok Tunnel
       run: |
-        .\ngrok tcp 3389 & 
+        Start-Process -FilePath ".\ngrok.exe" -ArgumentList "tcp 3389" -WindowStyle Hidden
 
     - name: Get Public URL
       run: |
-        # Get the public URL from the ngrok web interface
-        # This step might require some adjustments based on the actual output format
-        $url = (Invoke-WebRequest -Uri "http://localhost:4040/api/tunnels" -UseBasicParsing).Content | ConvertFrom-Json).tunnels[0].public_url
+        Start-Sleep -Seconds 5  # Wait for ngrok to start
+        $tunnels = Invoke-RestMethod -Uri "http://localhost:4040/api/tunnels"
+        $url = $tunnels.tunnels[0].public_url
         Write-Host "RDP Server URL: $url"
+        Write-Host "Username: runneradmin"
+        $password = [System.Web.Security.Membership]::GeneratePassword(16,3)
+        Set-LocalUser -Name "runneradmin" -Password (ConvertTo-SecureString -AsPlainText $password -Force)
+        Write-Host "Password: $password"
 
-    - name: Display Access Instructions
+    - name: Keep Action Running
       run: |
-        Write-Host "Access your RDP server at: $url"
-
-    - name: Keep Action Alive (Optional)
-      run: |
-        Start-Sleep -Seconds 43200 # Keep the action running for 12 hours (optional)
+        while ($true) { 
+          Write-Host "Keep alive..."
+          Start-Sleep -Seconds 300
+        }
