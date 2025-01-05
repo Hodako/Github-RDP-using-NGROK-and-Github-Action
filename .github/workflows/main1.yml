@@ -18,25 +18,16 @@ jobs:
         Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
         Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 1
 
-    - name: Install Latest Ngrok Version
+    - name: Download Ngrok
       run: |
-        # Download ngrok from the official website and install it
-        curl -sSL https://ngrok-agent.s3.amazonaws.com/ngrok.asc \
-	| sudo tee /etc/apt/trusted.gpg.d/ngrok.asc >/dev/null \
-	&& echo "deb https://ngrok-agent.s3.amazonaws.com buster main" \
-	| sudo tee /etc/apt/sources.list.d/ngrok.list \
-	&& sudo apt update \
-	&& sudo apt install ngrok
-        
+        # Download ngrok from the official website
+        Invoke-WebRequest -Uri "https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-windows-amd64.zip" -OutFile "ngrok.zip"
+        Expand-Archive -Path ngrok.zip -DestinationPath $env:USERPROFILE
+
+    - name: Verify Ngrok Installation
+      run: |
         # Verify ngrok installation
         Write-Host "Testing ngrok installation..."
-        .\ngrok.exe --version
-
-        # Update ngrok if needed
-        Write-Host "Updating ngrok to the latest version..."
-        .\ngrok.exe update
-
-        # Verify the updated version
         .\ngrok.exe --version
 
     - name: Configure Ngrok
