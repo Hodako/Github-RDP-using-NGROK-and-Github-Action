@@ -1,0 +1,51 @@
+name: Run Windows RDP Server with Ngrok
+
+on:
+  workflow_dispatch:
+
+jobs:
+  setup-rdp:
+    runs-on: windows-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    - name: Install Remote Desktop Services
+      run: |
+        Install-WindowsFeature RSAT-Remote-Server-AdminTools
+        Import-Module ServerManager
+        Add-WindowsFeature Remote-Desktop-Services -IncludeManagementTools
+
+    - name: Start RDP Service
+      run: |
+        Start-Service TermService
+
+    - name: Download and Install Ngrok
+      run: |
+        # Download Ngrok
+        Invoke-WebRequest -Uri "https://bin.equinox.io/c/4VmDzA7iaHb/ngrok-stable-windows-amd64.zip" -OutFile ngrok.zip
+        Expand-Archive -Path ngrok.zip -DestinationPath .
+
+    - name: Authenticate Ngrok
+      run: |
+        .\ngrok authtoken 2rC7iawEEfzRpSiL0KAaBWTNBB7_7NzNYTKce8RFTuQ3y6jfR
+
+    - name: Start Ngrok Tunnel
+      run: |
+        .\ngrok tcp 3389 & 
+
+    - name: Get Public URL
+      run: |
+        # Get the public URL from the ngrok web interface
+        # This step might require some adjustments based on the actual output format
+        $url = (Invoke-WebRequest -Uri "http://localhost:4040/api/tunnels" -UseBasicParsing).Content | ConvertFrom-Json).tunnels[0].public_url
+        Write-Host "RDP Server URL: $url"
+
+    - name: Display Access Instructions
+      run: |
+        Write-Host "Access your RDP server at: $url"
+
+    - name: Keep Action Alive (Optional)
+      run: |
+        Start-Sleep -Seconds 43200 # Keep the action running for 12 hours (optional)
