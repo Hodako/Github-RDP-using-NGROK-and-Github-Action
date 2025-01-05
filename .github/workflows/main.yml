@@ -18,12 +18,21 @@ jobs:
         Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
         Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 1
 
-    - name: Download and Install Ngrok
+    - name: Install Latest Ngrok Version
       run: |
+        # Download ngrok from the official website and install it
         Invoke-WebRequest -Uri "https://bin.equinox.io/c/4VmDzA7iaHb/ngrok-stable-windows-amd64.zip" -OutFile ngrok.zip
         Expand-Archive -Path ngrok.zip -DestinationPath .
-        # Test ngrok executable
+        
+        # Verify ngrok installation
         Write-Host "Testing ngrok installation..."
+        .\ngrok.exe --version
+
+        # Update ngrok if needed
+        Write-Host "Updating ngrok to the latest version..."
+        .\ngrok.exe update
+
+        # Verify the updated version
         .\ngrok.exe --version
 
     - name: Configure Ngrok
@@ -121,4 +130,3 @@ jobs:
             }
             
             Start-Sleep -Seconds 300
-        }
