@@ -6,6 +6,7 @@ on:
 jobs:
   setup-rdp:
     runs-on: windows-latest
+    timeout-minutes: 720  # 12 hours timeout
 
     steps:
     - name: Checkout code
@@ -28,24 +29,55 @@ jobs:
       run: |
         .\ngrok authtoken $env:NGROK_AUTH_TOKEN
 
-    - name: Start Ngrok Tunnel
+    - name: Start Ngrok and Get URL
       run: |
-        Start-Process -FilePath ".\ngrok.exe" -ArgumentList "tcp 3389" -WindowStyle Hidden
+        # Start Ngrok in background
+        Start-Process -FilePath ".\ngrok.exe" -ArgumentList "tcp","3389" -WindowStyle Hidden
+        
+        # Wait for Ngrok to start and create the tunnel
+        $maxRetries = 10
+        $retryCount = 0
+        $tunnelReady = $false
+        
+        Write-Host "Waiting for Ngrok to start..."
+        
+        do {
+            Start-Sleep -Seconds 5
+            try {
+                $response = Invoke-RestMethod -Uri "http://localhost:4040/api/tunnels" -ErrorAction SilentlyContinue
+                if ($response.tunnels.length -gt 0) {
+                    $tunnelReady = $true
+                    $url = $response.tunnels[0].public_url
+                    Write-Host "Ngrok Tunnel URL: $url"
+                    
+                    # Generate and set random password
+                    Add-Type -AssemblyName 'System.Web'
+                    $password = [System.Web.Security.Membership]::GeneratePassword(16,3)
+                    net user runneradmin $password
+                    
+                    Write-Host "RDP Credentials:"
+                    Write-Host "Username: runneradmin"
+                    Write-Host "Password: $password"
+                    Write-Host "Public URL: $url"
+                    break
+                }
+            } catch {
+                $retryCount++
+                Write-Host "Attempt $retryCount of $maxRetries - Waiting for Ngrok API..."
+            }
+        } while (-not $tunnelReady -and $retryCount -lt $maxRetries)
+        
+        if (-not $tunnelReady) {
+            Write-Error "Failed to establish Ngrok tunnel after $maxRetries attempts"
+            exit 1
+        }
 
-    - name: Get Public URL
+    - name: Keep Alive for 12 Hours
       run: |
-        Start-Sleep -Seconds 5  # Wait for ngrok to start
-        $tunnels = Invoke-RestMethod -Uri "http://localhost:4040/api/tunnels"
-        $url = $tunnels.tunnels[0].public_url
-        Write-Host "RDP Server URL: $url"
-        Write-Host "Username: runneradmin"
-        $password = [System.Web.Security.Membership]::GeneratePassword(16,3)
-        Set-LocalUser -Name "runneradmin" -Password (ConvertTo-SecureString -AsPlainText $password -Force)
-        Write-Host "Password: $password"
-
-    - name: Keep Action Running
-      run: |
-        while ($true) { 
-          Write-Host "Keep alive..."
-          Start-Sleep -Seconds 300
+        $timer = [Diagnostics.Stopwatch]::StartNew()
+        while ($timer.Elapsed.TotalHours -lt 12) {
+            $elapsedHours = $timer.Elapsed.TotalHours.ToString('0.0')
+            $remainingHours = (12 - $timer.Elapsed.TotalHours).ToString('0.0')
+            Write-Host "Session active - Elapsed: $elapsedHours hours - Remaining: $remainingHours hours"
+            Start-Sleep -Seconds 300
         }
