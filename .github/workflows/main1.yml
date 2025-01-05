@@ -1,0 +1,136 @@
+name: Run Windows RDP Server with Ngrok
+
+on:
+  workflow_dispatch:
+
+jobs:
+  setup-rdp:
+    runs-on: windows-latest
+    timeout-minutes: 720  # 12 hours timeout
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    - name: Configure Remote Desktop
+      run: |
+        Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0
+        Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
+        Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 1
+
+    - name: Install Latest Ngrok Version
+      run: |
+        # Download ngrok from the official website and install it
+        curl -sSL https://ngrok-agent.s3.amazonaws.com/ngrok.asc \
+	| sudo tee /etc/apt/trusted.gpg.d/ngrok.asc >/dev/null \
+	&& echo "deb https://ngrok-agent.s3.amazonaws.com buster main" \
+	| sudo tee /etc/apt/sources.list.d/ngrok.list \
+	&& sudo apt update \
+	&& sudo apt install ngrok
+        
+        # Verify ngrok installation
+        Write-Host "Testing ngrok installation..."
+        .\ngrok.exe --version
+
+        # Update ngrok if needed
+        Write-Host "Updating ngrok to the latest version..."
+        .\ngrok.exe update
+
+        # Verify the updated version
+        .\ngrok.exe --version
+
+    - name: Configure Ngrok
+      env:
+        NGROK_AUTH_TOKEN: ${{ secrets.NGROK_AUTH_TOKEN }}
+      run: |
+        # Configure and verify ngrok
+        Write-Host "Configuring ngrok..."
+        .\ngrok.exe authtoken $env:NGROK_AUTH_TOKEN
+        
+        # Verify the config file was created
+        if (Test-Path "$env:USERPROFILE\.ngrok2\ngrok.yml") {
+            Write-Host "Ngrok configured successfully"
+        } else {
+            Write-Error "Ngrok configuration failed"
+            exit 1
+        }
+
+    - name: Start Ngrok and Get URL
+      run: |
+        # Kill any existing ngrok processes
+        taskkill /f /im ngrok.exe 2>$null
+        
+        Write-Host "Starting Ngrok..."
+        Start-Process -FilePath ".\ngrok.exe" -ArgumentList "tcp","3389","--log=ngrok.log" -NoNewWindow
+        
+        # Wait for log file creation and check its content
+        $maxRetries = 15
+        $retryCount = 0
+        $tunnelReady = $false
+        
+        Write-Host "Waiting for Ngrok to start..."
+        
+        do {
+            Start-Sleep -Seconds 10
+            try {
+                # Check if ngrok is running
+                $ngrokProcess = Get-Process ngrok -ErrorAction SilentlyContinue
+                if (-not $ngrokProcess) {
+                    Write-Host "Ngrok process not found. Checking log..."
+                    if (Test-Path "ngrok.log") {
+                        Get-Content "ngrok.log" | Select-Object -Last 5
+                    }
+                    throw "Ngrok process not running"
+                }
+                
+                # Try to get tunnel info
+                $response = Invoke-RestMethod -Uri "http://localhost:4040/api/tunnels" -ErrorAction Stop
+                if ($response.tunnels.length -gt 0) {
+                    $tunnelReady = $true
+                    $url = $response.tunnels[0].public_url
+                    Write-Host "Ngrok Tunnel URL: $url"
+                    
+                    # Set up RDP credentials
+                    $password = "Temp" + (New-Guid).ToString().Substring(0,8) + "!"
+                    net user runneradmin $password
+                    
+                    Write-Host "========================="
+                    Write-Host "RDP Connection Details:"
+                    Write-Host "========================="
+                    Write-Host "Username: runneradmin"
+                    Write-Host "Password: $password"
+                    Write-Host "Public URL: $url"
+                    Write-Host "========================="
+                    break
+                }
+            } catch {
+                $retryCount++
+                Write-Host "Attempt $retryCount of $maxRetries - Waiting for Ngrok API... Error: $_"
+                if (Test-Path "ngrok.log") {
+                    Write-Host "Recent ngrok logs:"
+                    Get-Content "ngrok.log" | Select-Object -Last 5
+                }
+            }
+        } while (-not $tunnelReady -and $retryCount -lt $maxRetries)
+        
+        if (-not $tunnelReady) {
+            Write-Error "Failed to establish Ngrok tunnel after $maxRetries attempts"
+            exit 1
+        }
+
+    - name: Keep Alive for 12 Hours
+      run: |
+        $timer = [Diagnostics.Stopwatch]::StartNew()
+        while ($timer.Elapsed.TotalHours -lt 12) {
+            $elapsedHours = $timer.Elapsed.TotalHours.ToString('0.0')
+            $remainingHours = (12 - $timer.Elapsed.TotalHours).ToString('0.0')
+            Write-Host "Session active - Elapsed: $elapsedHours hours - Remaining: $remainingHours hours"
+            
+            # Verify ngrok is still running
+            $ngrokProcess = Get-Process ngrok -ErrorAction SilentlyContinue
+            if (-not $ngrokProcess) {
+                Write-Error "Ngrok process stopped unexpectedly"
+                exit 1
+            }
+            
+            Start-Sleep -Seconds 300
